@@ -70,7 +70,6 @@ async function checkeEvents() {
     const authClient = await auth.getClient();
     const calendar = google.calendar({ version: 'v3', auth: authClient });
 
-
     const now = new Date();
 
 
