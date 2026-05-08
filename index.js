@@ -122,7 +122,7 @@ async function checkeEvents() {
       const events = response.data.items;
 
       if (!events || events.length === 0) {
-        await sendNtfySummary("Ciao Roby buongiorno, per domani non hai appuntamenti programmati quindi non ho mandato nessun reminder. Buona giornata! 📭","Softique Beauty Nail", process.env.NTFY_TOPIC_ROBY,"default","memo,nail_care");
+        await sendNtfySummary("Ciao Roby!,\n Per domani non hai appuntamenti programmati quindi non ho mandato nessun reminder.\nBuona giornata! 📭","Softique Beauty Nail", process.env.NTFY_TOPIC_ROBY,"default","memo,nail_care");
         return;
       }
 
