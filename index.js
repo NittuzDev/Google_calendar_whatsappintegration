@@ -1,5 +1,12 @@
 import { google } from 'googleapis';
 import path from 'node:path';
+import axios from 'axios';
+import pkg from 'whatsapp-web.js';
+import 'dotenv/config';
+import qrcode from 'qrcode-terminal'; // FIX 1: Standard import
+
+const { Client, LocalAuth } = pkg;
+
 
 // 1. Setup Auth
 const auth = new google.auth.GoogleAuth({
@@ -9,11 +16,12 @@ const auth = new google.auth.GoogleAuth({
 
 
 
-// setup client for whatsapp server
+// --- NTFY NOTIFICATION LOGIC ---
+let hasNotified = false; // Flag to prevent spam
 
-import pkg from 'whatsapp-web.js';
-import qrcode from 'qrcode-terminal'; // FIX 1: Standard import
-const { Client, LocalAuth } = pkg;
+
+
+// --- WHATSAPP CLIENT SETUP ---
 
 const client = new Client({
     authStrategy: new LocalAuth({
@@ -23,133 +31,168 @@ const client = new Client({
     // FIX 2: Add puppeteer args to ensure the browser launches correctly
     puppeteer: {
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--single-process', // Aiuta a gestire meglio i file su Windows
+        ],
     }
 });
 
-client.on('ready', () => {
-    console.log('✅ Client is ready!');;
-    checkeEvents();
+client.on('ready', async () => {
+    console.log('✅ Client is ready!');
+    hasNotified = false; 
+    
+    // Eseguiamo la logica
+    await checkeEvents();
+    
+    // Il client viene distrutto dentro il finally di checkeEvents
+    //console.log('Procedura completata.');
+});
+
+// Listener for the QR code
+
+client.on('qr', (qr) => {
+  console.log('QR RECEIVED: Generating in terminal');
+  qrcode.generate(qr, { small: true }); // Still prints to shell for backup
+ 
+  // Send the push notification (only once)
+  
+  if(!hasNotified)
+  {
+    sendNtfySummary("⚠️ La sessione di whatsapp è scaduta! Accedi al terminale per scansionare il QR code","Softique Admin",process.env.NTFY_TOPIC_ADMIN,"high",'warning');
+    hasNotified = true;
+  }
+
 });
 
 function generateReminder(date, time) {
   return `💅💅 *Softique Beauty Nail* 💅💅\n\n*Promemoria appuntamento*\n\nLe ricordiamo il suo appuntamento:\n🗓️ ${date} \n⏰️ ${time} \n\nPresso: Estetica Samsara, via Antonio Magri 3/A Rovetta (BG)\n\nMessaggio generato automaticamente`;
 }
 
-
+// -- FUNCTION FOR SEND WHATSAPP REMINDERS
+// Nella funzione send_reminder, assicurati di attendere l'invio
 async function send_reminder(chatId, text) {
-
     try {
-
-        console.log(chatId);
         const number_details = await client.getNumberId(chatId);
-        
-        console.log(number_details);
-
-        const contact_info = await client.getContactById(chatId)
-        
-
         if (number_details && number_details._serialized) {
-
-            //const sendMessageData = await client.sendMessage(number_details._serialized, text);
-
-            console.log("Messaggio inviato con successo!");
+            // È fondamentale l'await qui
+            const sendMessageData = await client.sendMessage(number_details._serialized, text);
+            console.log(`✅ Messaggio inviato a ${chatId}`);
             return sendMessageData;
         } else {
-            console.log(chatId, "Il numero non è registrato su WhatsApp");
+            console.log(chatId, "Il numero non è registrato");
         }
     } catch (error) {
-        // Questo cattura l'errore che causa il triggerUncaughtException
-        console.error("Errore durante l'invio del messaggio:", error.message);
+        console.error("Errore invio:", error.message);
+        throw error; // Rilancia l'errore per gestirlo nel report
     }
 }
 
 
 async function checkeEvents() {
+  let reportDetails = [];
+  let successCount = 0;
+
   try {
-    const authClient = await auth.getClient();
-    const calendar = google.calendar({ version: 'v3', auth: authClient });
+      const authClient = await auth.getClient();
+      const calendar = google.calendar({ version: 'v3', auth: authClient });
 
-    const now = new Date();
+      const now = new Date();
+      const tomorrow_morning = new Date(now);
+      tomorrow_morning.setDate(now.getDate() + 1);
+      tomorrow_morning.setHours(0, 0, 0, 0);
 
+      const tomorrow_evening = new Date(now);
+      tomorrow_evening.setDate(now.getDate() + 1);
+      tomorrow_evening.setHours(23, 59, 59, 99);
 
-    const tomorrow_morning = new Date(now);
-    tomorrow_morning.setDate(now.getDate() + 1);
-    tomorrow_morning.setHours(1, 0, 0, 0);
-
-
-    // Create a new date for tomorrow
-    const tomorrow_evening = new Date(now);
-    tomorrow_evening.setDate(now.getDate() + 1);
-
-    // Set time to 23:59:00.000
-    tomorrow_evening.setHours(23, 59, 0, 0);
-
-
-    // 2. Fetch Events
-    const response = await calendar.events.list({
-      calendarId: 'softique.beauty.nail@gmail.com', // This refers to the service account's own calendar
-                             // or the one you shared with its email.
-      timeMin: tomorrow_morning.toISOString(),
-      timeMax: tomorrow_evening.toISOString(),
-      singleEvents: true,
-      orderBy: 'startTime',
-    });
-
-    const events = response.data.items;
-
-    if (!events || events.length === 0) {
-      console.log('No upcoming events found.');
-      return;
-    }
-
-    console.log('Upcoming events for tomorrow:');
-    events.forEach((event) => {
-      
-      var number_tel=event.location;
-      var startdtime=event.start.dateTime
-
-      var startdate=new Date(startdtime)
-      var appdate = startdate.toLocaleDateString();
-
-      var apptime = startdate.toLocaleTimeString('it-IT', {
-          timeStyle: 'short',
-          hour12: false
+      const response = await calendar.events.list({
+        calendarId: process.env.CALENDAR_ID,
+        timeMin: tomorrow_morning.toISOString(),
+        timeMax: tomorrow_evening.toISOString(),
+        singleEvents: true,
+        orderBy: 'startTime',
       });
 
+      const events = response.data.items;
 
-        // Number where you want to send the message.
-        const number = number_tel;
+      if (!events || events.length === 0) {
+        await sendNtfySummary("Ciao Roby buongiorno, per domani non hai appuntamenti programmati quindi non ho mandato nessun reminder. Buona giornata! 📭","Softique Beauty Nail", process.env.NTFY_TOPIC_ROBY,"default","memo,nail_care");
+        return;
+      }
 
-        // Your message.
-        
-        // Getting chatId from the number.
-        // we have to delete "+" from the beginning and add "@c.us" at the end of the number.
-        const chatId = number + "@c.us";
-        send_reminder (chatId, generateReminder(appdate, apptime));
+      // MODIFICA: Usiamo un ciclo for...of per inviare i messaggi uno alla volta
+      for (const event of events) {
+        const number_tel = event.location;
+        const clientName = event.summary || "Cliente";
 
-    });
+        if (!number_tel) {
+          reportDetails.push(`❌ ${clientName}: No numero`);
+          continue; // Passa al prossimo evento
+        }
 
-    
-    
+        const startdate = new Date(event.start.dateTime);
+        const apptime = startdate.toLocaleTimeString('it-IT', { timeStyle: 'short', hour12: false });
+        const chatId = number_tel.replace('+', '').trim() + "@c.us";
+
+        try {
+          // Aspetta che l'invio sia completato prima di passare al prossimo
+          await send_reminder(chatId, generateReminder(startdate.toLocaleDateString('it-IT'), apptime));
+          successCount++;
+          reportDetails.push(`✅ ${apptime} - ${clientName}`);
+          
+          // Piccolo delay di cortesia tra un messaggio e l'altro (opzionale ma consigliato)
+          await new Promise(resolve => setTimeout(resolve, 2000)); 
+          
+        } catch (err) {
+          console.error(`Errore invio a ${clientName}:`, err.message);
+          reportDetails.push(`❌ ${apptime} - ${clientName} (Errore)`);
+        }
+      }
+
+      const summaryMessage = `Appuntamenti di domani\n\nReminder inviati: ${successCount}/${events.length}\n\n` + reportDetails.join('\n');
+      await sendNtfySummary(summaryMessage,"Softique Beauty Nail",process.env.NTFY_TOPIC_ROBY,"default","memo,nail_care");
+
   } catch (error) {
-    console.error('Error fetching calendar events:', error);
+    console.error('❌ Error:', error);
+    await sendNtfySummary("Errore critico durante il check degli eventi!","Softique Admin",process.env.NTFY_TOPIC_ADMIN,"high",'warning');
   } finally {
-
-          await Promise.all(eventPromises); // You'd need to map events to promises first
-          console.log("All reminders processed. Shutting down...");
-          await client.destroy(); 
-          process.exit(0);
-
+    try {
+        console.log("Tentativo di chiusura del client...");
+        await client.destroy(); 
+        console.log("Client distrutto correttamente.");
+        await new Promise(resolve => setTimeout(resolve, 5000));
+    } catch (err) {
+        console.error("Errore durante la distruzione del client:", err.message);
+    }
+    
+    console.log("Uscita definitiva.");
+    process.exit(0);
   }
 }
 
-// Listener for the QR code
-client.on('qr', (qr) => {
-    console.log('QR RECEIVED:');
-    qrcode.generate(qr, { small: true });
-});
-
+async function sendNtfySummary(message, title, topic, priority, tags) {
+    try {
+        await axios.post(`https://ntfy.sh/${topic}`, 
+            message, 
+            {
+                headers: {
+                    'Title': title,
+                    'Priority': priority,
+                    'Tags': tags
+                }
+            }
+        );
+        console.log(`📲 Inviata comunicazione ntfy - ${title}`);
+    } catch (error) {
+        console.error('❌ Errore invio ntfy summary:', error.message);
+    }
+}
 
 console.log("⏳ Initializing WhatsApp...");
 await client.initialize();
