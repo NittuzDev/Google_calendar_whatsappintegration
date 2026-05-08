@@ -20,7 +20,6 @@ const auth = new google.auth.GoogleAuth({
 let hasNotified = false; // Flag to prevent spam
 
 
-
 // --- WHATSAPP CLIENT SETUP ---
 
 const client = new Client({
@@ -44,14 +43,15 @@ const client = new Client({
 });
 
 client.on('ready', async () => {
+    clearTimeout(initTimeout);
     console.log('✅ Client is ready!');
     hasNotified = false; 
-    
-    // Eseguiamo la logica
-    await checkeEvents();
-    
-    // Il client viene distrutto dentro il finally di checkeEvents
-    //console.log('Procedura completata.');
+    try {
+        await checkeEvents();
+    } finally {
+        await client.destroy().catch(() => {});
+        process.exit(0);
+    }
 });
 
 // Listener for the QR code
@@ -128,26 +128,43 @@ async function checkeEvents() {
 
       // MODIFICA: Usiamo un ciclo for...of per inviare i messaggi uno alla volta
       for (const event of events) {
+
         const number_tel = event.location;
         const clientName = event.summary || "Cliente";
 
+        //numero di telefono mancante
         if (!number_tel) {
-          reportDetails.push(`❌ ${clientName}: No numero`);
+          reportDetails.push(`❌ ${clientName}: Numero di telefono mancante`);
           continue; // Passa al prossimo evento
         }
 
+        if (!event.start.dateTime) {
+            reportDetails.push(`⏭️ ${clientName}: Evento tutto il giorno, reminder non inviato`);
+            continue;
+        }
+
         const startdate = new Date(event.start.dateTime);
-        const apptime = startdate.toLocaleTimeString('it-IT', { timeStyle: 'short', hour12: false });
+
+        const apptime = startdate.toLocaleTimeString('it-IT', { 
+            timeStyle: 'short', 
+            timeZone: 'Europe/Rome' 
+        });
+        const appdate = startdate.toLocaleDateString('it-IT', { 
+            timeZone: 'Europe/Rome' 
+        });
+
         const chatId = number_tel.replace('+', '').trim() + "@c.us";
 
         try {
           // Aspetta che l'invio sia completato prima di passare al prossimo
-          await send_reminder(chatId, generateReminder(startdate.toLocaleDateString('it-IT'), apptime));
+          await send_reminder(chatId, generateReminder(appdate, apptime));
           successCount++;
           reportDetails.push(`✅ ${apptime} - ${clientName}`);
           
           // Piccolo delay di cortesia tra un messaggio e l'altro (opzionale ma consigliato)
-          await new Promise(resolve => setTimeout(resolve, 2000)); 
+          // ✅ Tra 2 e 5 secondi
+          const delay = 2000 + Math.random() * 3000;
+          await new Promise(resolve => setTimeout(resolve, delay));
           
         } catch (err) {
           console.error(`Errore invio a ${clientName}:`, err.message);
@@ -161,19 +178,7 @@ async function checkeEvents() {
   } catch (error) {
     console.error('❌ Error:', error);
     await sendNtfySummary("Errore critico durante il check degli eventi!","Softique Admin",process.env.NTFY_TOPIC_ADMIN,"high",'warning');
-  } finally {
-    try {
-        console.log("Tentativo di chiusura del client...");
-        await client.destroy(); 
-        console.log("Client distrutto correttamente.");
-        await new Promise(resolve => setTimeout(resolve, 5000));
-    } catch (err) {
-        console.error("Errore durante la distruzione del client:", err.message);
-    }
-    
-    console.log("Uscita definitiva.");
-    process.exit(0);
-  }
+  } 
 }
 
 async function sendNtfySummary(message, title, topic, priority, tags) {
@@ -195,4 +200,20 @@ async function sendNtfySummary(message, title, topic, priority, tags) {
 }
 
 console.log("⏳ Initializing WhatsApp...");
+
+const INIT_TIMEOUT_MS = 3 * 60 * 1000; // 3 minuti
+
+const initTimeout = setTimeout(async () => {
+    console.error('⏱️ Timeout: client non pronto, uscita forzata.');
+    await sendNtfySummary(
+        '⚠️ Timeout avvio WhatsApp: sessione probabilmente scaduta.',
+        'Softique Admin',
+        process.env.NTFY_TOPIC_ADMIN,
+        'high',
+        'warning'
+    );
+    await client.destroy().catch(() => {});
+    process.exit(1);
+}, INIT_TIMEOUT_MS);
+
 await client.initialize();
