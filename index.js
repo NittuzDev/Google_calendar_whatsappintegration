@@ -122,7 +122,7 @@ async function checkeEvents() {
       const events = response.data.items;
 
       if (!events || events.length === 0) {
-        console.log("No events planne for tomorrow");
+        console.log("No events planned for tomorrow");
         await sendNtfySummary("\n\nCiao Roby!\n\nPer domani non hai appuntamenti programmati quindi non ho mandato nessun reminder.\n\nBuona giornata! 📭","Softique Beauty Nail", process.env.NTFY_TOPIC_ROBY,"default","memo,nail_care");
         return;
       }
