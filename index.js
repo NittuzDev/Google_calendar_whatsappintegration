@@ -31,23 +31,17 @@ const client = new Client({
     },
     // FIX 2: Add puppeteer args to ensure the browser launches correctly
     puppeteer: {
-    headless: true,
-    executablePath: '/usr/bin/chromium',
-    args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process',           // ← AGGIUNTO: utile su LXC
-        '--disable-gpu',              // ← AGGIUNTO
-        '--disable-features=VizDisplayCompositor', // ← AGGIUNTO
-        '--disable-extensions',
-        '--disable-background-networking',
-        '--disable-default-apps',
-    ],
-    timeout: 60000  // ← AGGIUNTO: più tempo per avviarsi
+        headless: true,
+        executablePath: '/usr/bin/chromium',
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--no-zygote',
+            '--single-process',
+            '--disable-gpu',
+        ],
+        timeout: 60000  // ← AGGIUNTO: più tempo per avviarsi
 }
 });
 
