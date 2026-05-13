@@ -25,9 +25,9 @@ const client = new Client({
         clientId: "client-one", // Best practice: use a specific ID
         dataPath: './sessions'  // Use a relative path
     }),
-    webVersion: '2.3000.1015901785',   // ← Forza una versione stabile
     webVersionCache: {
-        type: 'local',                  // ← Usa cache locale invece di scaricare
+        type: 'remote',
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1015901785.html',
     },
     // FIX 2: Add puppeteer args to ensure the browser launches correctly
     puppeteer: {
