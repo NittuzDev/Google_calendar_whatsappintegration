@@ -11,10 +11,8 @@ const { Client, LocalAuth } = pkg;
 // 1. Setup Auth
 const auth = new google.auth.GoogleAuth({
   keyFile: path.join(process.cwd(), 'credentials.json'),
-  scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
+  scopes: ['https://www.googleapis.com/auth/calendar'],
 });
-
-
 
 // --- NTFY NOTIFICATION LOGIC ---
 let hasNotified = false; // Flag to prevent spam
@@ -85,7 +83,7 @@ async function send_reminder(chatId, text) {
             console.log(`✅ Messaggio inviato a ${chatId}`);
             return sendMessageData;
         } else {
-            console.log(chatId, "Il numero non è registrato");
+            throw {name : "NotPresentError", message : "Il numero non è registrato"}; 
         }
     } catch (error) {
         console.error("Errore invio:", error.message);
@@ -130,16 +128,29 @@ async function checkeEvents() {
       // MODIFICA: Usiamo un ciclo for...of per inviare i messaggi uno alla volta
       for (const event of events) {
 
+
+        console.log("\nLavorazione evento "+event.summary+" - "+event.location+"\n");
+
         const number_tel = event.location;
         const clientName = event.summary || "Cliente";
 
         //numero di telefono mancante
         if (!number_tel) {
           reportDetails.push(`❌ ${clientName}: Numero di telefono mancante`);
+          console.log("Numero di telefono mancante - skip\n");
           continue; // Passa al prossimo evento
         }
 
+        const eventDescription = event.description || "";
+
+        if (eventDescription.includes("[REMINDER_SENT]")) {
+            console.log("Reminder già inviato - skip\n");
+            reportDetails.push(`❌ ${clientName}: Reminder già inviato`);
+            continue; 
+        }
+
         if (!event.start.dateTime) {
+            console.log("Evento tutto il giorno - skip\n");
             reportDetails.push(`⏭️ ${clientName}: Evento tutto il giorno, reminder non inviato`);
             continue;
         }
@@ -162,6 +173,16 @@ async function checkeEvents() {
           successCount++;
           reportDetails.push(`✅ ${apptime} - ${clientName}`);
           
+
+          // Inserisco il TAG per l invio
+          await calendar.events.patch({
+                calendarId: process.env.CALENDAR_ID,
+                eventId: event.id,
+                requestBody: {
+                description: "[REMINDER_SENT]",
+                },
+            }); 
+
           // Piccolo delay di cortesia tra un messaggio e l'altro (opzionale ma consigliato)
           // ✅ Tra 2 e 5 secondi
           const delay = 2000 + Math.random() * 3000;
@@ -169,7 +190,7 @@ async function checkeEvents() {
           
         } catch (err) {
           console.error(`Errore invio a ${clientName}:`, err.message);
-          reportDetails.push(`❌ ${apptime} - ${clientName} (Errore)`);
+          reportDetails.push(`❌ ${apptime} - ${clientName} - ${err.message}`);
         }
       }
 
