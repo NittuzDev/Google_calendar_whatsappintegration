@@ -27,7 +27,7 @@ const client = new Client({
     }),
     webVersionCache: {
         type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1015901785.html',
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1039391386-alpha.html',
     },
     // FIX 2: Add puppeteer args to ensure the browser launches correctly
     puppeteer: {
