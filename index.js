@@ -25,18 +25,29 @@ const client = new Client({
         clientId: "client-one", // Best practice: use a specific ID
         dataPath: './sessions'  // Use a relative path
     }),
+    webVersion: '2.3000.1015901785',   // ← Forza una versione stabile
+    webVersionCache: {
+        type: 'local',                  // ← Usa cache locale invece di scaricare
+    },
     // FIX 2: Add puppeteer args to ensure the browser launches correctly
     puppeteer: {
-        headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-        ],
-    }
+    headless: true,
+    args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',           // ← AGGIUNTO: utile su LXC
+        '--disable-gpu',              // ← AGGIUNTO
+        '--disable-features=VizDisplayCompositor', // ← AGGIUNTO
+        '--disable-extensions',
+        '--disable-background-networking',
+        '--disable-default-apps',
+    ],
+    timeout: 60000  // ← AGGIUNTO: più tempo per avviarsi
+}
 });
 
 client.on('ready', async () => {
