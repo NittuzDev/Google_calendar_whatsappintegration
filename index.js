@@ -32,6 +32,7 @@ const client = new Client({
     // FIX 2: Add puppeteer args to ensure the browser launches correctly
     puppeteer: {
     headless: true,
+    executablePath: '/usr/bin/chromium',
     args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
