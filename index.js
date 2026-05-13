@@ -35,7 +35,6 @@ const client = new Client({
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
-            '--single-process', // Aiuta a gestire meglio i file su Windows
         ],
     }
 });
@@ -44,8 +43,11 @@ client.on('ready', async () => {
     clearTimeout(initTimeout);
     console.log('✅ Client is ready!');
     hasNotified = false; 
-    try {
+     try {
         await checkeEvents();
+    } catch (err) {
+        console.error('❌ Errore in checkeEvents:', err); // vedi cosa crasha
+        await sendNtfySummary("Errore critico durante il check degli eventi!","Softique Admin",process.env.NTFY_TOPIC_ADMIN,"high",'warning');
     } finally {
         await client.destroy().catch(() => {});
         process.exit(0);
@@ -179,7 +181,7 @@ async function checkeEvents() {
                 calendarId: process.env.CALENDAR_ID,
                 eventId: event.id,
                 requestBody: {
-                description: "[REMINDER_SENT]",
+                description: eventDescription + "\n[REMINDER_SENT]",
                 },
             }); 
 
