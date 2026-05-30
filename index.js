@@ -76,6 +76,19 @@ client.on('qr', (qr) => {
 
 });
 
+client.on('auth_failure', async (msg) => {
+    console.error('❌ Autenticazione fallita:', msg);
+    await sendNtfySummary(
+        `⚠️ Autenticazione WhatsApp fallita!\n\nErrore: ${msg}\n\nCancella la cartella ./sessions e riscansiona il QR code.`,
+        'Softique Admin',
+        process.env.NTFY_TOPIC_ADMIN,
+        'high',
+        'warning'
+    );
+    await client.destroy().catch(() => {});
+    process.exit(1);
+});
+
 function generateReminder(date, time) {
   return `💅💅 *Softique Beauty Nail* 💅💅\n\n*Promemoria appuntamento*\n\nLe ricordiamo il suo appuntamento:\n🗓️ ${date} \n⏰️ ${time} \n\nPresso: Estetica Samsara, via Antonio Magri 3/A Rovetta (BG)\n\nMessaggio generato automaticamente`;
 }
