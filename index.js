@@ -90,8 +90,6 @@ async function createAndWaitReady(attempt) {
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',  // Chromium usa /tmp invece di /dev/shm
-          '--single-process',
-          '--no-zygote',
           '--disable-gpu',
           '--disable-software-rasterizer',
           '--disable-extensions',
@@ -99,7 +97,7 @@ async function createAndWaitReady(attempt) {
           // Su un LXC con 2GB di RAM condivisi tra OS e Chromium, senza questo
           // limite il renderer può allocare liberamente fino a crashare per OOM
           // proprio durante l'injection di whatsapp-web.js (TargetCloseError).
-          '--js-flags=--max-old-space-size=512',
+          '--js-flags=--max-old-space-size=1024',
         ],
         timeout: 60_000,
       },
