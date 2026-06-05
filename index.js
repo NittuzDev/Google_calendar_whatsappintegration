@@ -90,7 +90,7 @@ async function createAndWaitReady(attempt) {
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',  // Chromium usa /tmp invece di /dev/shm
-                                      // (necessario su LXC dove /dev/shm è limitato)
+          '--single-process',
           '--no-zygote',
           '--disable-gpu',
           '--disable-software-rasterizer',
