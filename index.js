@@ -214,6 +214,13 @@ async function createAndWaitReady(attempt) {
 
 // ── Loop principale con retry e backoff esponenziale ──────────────────────────
 async function run() {
+  
+  const dataAvvio = new Date();
+  const dataFormattata = dataAvvio.toLocaleString('it-IT', { timeZone: 'Europe/Rome' });
+  console.log(`==================================================`);
+  console.log(`🚀 Script avviato il: ${dataFormattata}`);
+  console.log(`==================================================`);
+  
   validateEnv();
 
   let lastError;
