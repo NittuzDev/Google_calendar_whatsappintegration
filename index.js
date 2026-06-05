@@ -92,10 +92,6 @@ async function createAndWaitReady(attempt) {
           '--disable-gpu',
           '--disable-software-rasterizer',
           '--disable-extensions',
-          // Limita la memoria massima del renderer a 512MB.
-          // Su un LXC con 2GB di RAM condivisi tra OS e Chromium, senza questo
-          // limite il renderer può allocare liberamente fino a crashare per OOM
-          // proprio durante l'injection di whatsapp-web.js (TargetCloseError).
           '--js-flags=--max-old-space-size=1024',
         ],
         timeout: 60_000,
@@ -242,7 +238,13 @@ async function run() {
           'warning',
         );
       } finally {
-        try { await client.destroy(); } catch (_) {}
+        try {
+           console.log('⏳ Chiusura del client WhatsApp in corso...');
+            // Aspetta 5 secondi per evitare di interrompere injection o chiamate RPC pendenti
+            await new Promise((r) => setTimeout(r, 5000)); 
+            await client.destroy(); 
+            console.log('👋 Client disconnesso pulitamente.'); 
+          } catch (_) {}
       }
 
       // Se checkeEvents ha lanciato, usciamo con codice 1 (errore) e non 0
