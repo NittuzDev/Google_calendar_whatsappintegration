@@ -89,7 +89,6 @@ async function createAndWaitReady(attempt) {
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',  // Chromium usa /tmp invece di /dev/shm
           '--disable-gpu',
           '--disable-software-rasterizer',
           '--disable-extensions',
