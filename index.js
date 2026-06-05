@@ -81,9 +81,7 @@ async function createAndWaitReady(attempt) {
         dataPath: './sessions',
       }),
       webVersionCache: {
-        type: 'remote',
-        remotePath:
-          'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1039391386-alpha.html',
+        type: 'local'
       },
       puppeteer: {
         headless: true,
