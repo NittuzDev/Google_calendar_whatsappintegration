@@ -15,8 +15,8 @@ const QR_TIMEOUT_MS      = 2 * 60 * 1000; // 2 min extra se arriva il QR (nessun
 const BACKOFF_BASE_MS    = 30_000;         // backoff esponenziale: 30s → 60s → 120s
 
 // ── Validazione variabili d'ambiente ─────────────────────────────────────────
-// FIX 3: Fallire subito con un messaggio chiaro invece di crashare a metà
-// esecuzione con errori criptici (es. ntfy.sh/undefined).
+// Fallire subito con un messaggio chiaro invece di crashare a metà esecuzione
+// con errori criptici (es. richieste a ntfy.sh/undefined).
 function validateEnv() {
   const required = ['CALENDAR_ID', 'NTFY_TOPIC_ADMIN', 'NTFY_TOPIC_ROBY'];
   const missing  = required.filter((k) => !process.env[k]);
@@ -53,17 +53,12 @@ async function cleanSessionCache() {
         console.log(`🧹 Cache eliminata: ${target}`);
       }
     } catch (err) {
-      // Non blocchiamo l'avvio se la pulizia fallisce: logghiamo e andiamo avanti
       console.warn(`⚠️ Impossibile eliminare ${target}: ${err.message}`);
     }
   }
 }
 
 // ── Creazione e attesa client WhatsApp ────────────────────────────────────────
-// FIX 1: Riscritta come funzione async normale invece di new Promise(async ...)
-// per evitare eccezioni silenziosamente inghiottite che lasciano la Promise appesa.
-// FIX 2: Guard booleano hasFailed per evitare doppi reject (es. auth_failure +
-// timeout in contemporanea che chiamano fail() due volte).
 async function createAndWaitReady(attempt) {
   let hasNotified  = false;
   let hasFailed    = false;
@@ -96,21 +91,27 @@ async function createAndWaitReady(attempt) {
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          // RIMOSSO --single-process: causava processi zombie e lock file
-          // appesi in ./sessions su Linux, miccia principale dei timeout.
+          '--disable-dev-shm-usage',  // Chromium usa /tmp invece di /dev/shm
+                                      // (necessario su LXC dove /dev/shm è limitato)
           '--no-zygote',
           '--disable-gpu',
+          '--disable-software-rasterizer',
+          '--disable-extensions',
+          // Limita la memoria massima del renderer a 512MB.
+          // Su un LXC con 2GB di RAM condivisi tra OS e Chromium, senza questo
+          // limite il renderer può allocare liberamente fino a crashare per OOM
+          // proprio durante l'injection di whatsapp-web.js (TargetCloseError).
+          '--js-flags=--max-old-space-size=512',
         ],
         timeout: 60_000,
       },
     });
 
-    // Wrappa i listener in una Promise gestita correttamente
     const readyPromise = new Promise((resolve, reject) => {
 
-      // Helper fail con guard: garantisce che reject venga chiamata una sola volta
-      // anche se più eventi di errore arrivano in sovrapposizione.
+      // Guard: garantisce che reject venga chiamata una sola volta anche se
+      // più eventi di errore arrivano in sovrapposizione (es. 'disconnected'
+      // e browserTimer che scattano insieme).
       const fail = async (reason) => {
         if (hasFailed) return;
         hasFailed = true;
@@ -126,8 +127,8 @@ async function createAndWaitReady(attempt) {
       // ── Listeners ────────────────────────────────────────────────────────────
 
       client.on('qr', (qr) => {
-        // FIX 7: Azzerare qrTimer prima di ricrearlo — il QR ruota ogni ~20s
-        // e senza clearTimeout si accumulano timer orfani in memoria.
+        // clearTimeout su entrambi: il QR ruota ogni ~20s e senza cancellazione
+        // si accumulano timer orfani che scattano in momenti inattesi.
         clearTimeout(browserTimer);
         clearTimeout(qrTimer);
         qrcode.generate(qr, { small: true });
@@ -143,7 +144,6 @@ async function createAndWaitReady(attempt) {
           );
         }
 
-        // Se nessuno scansiona entro QR_TIMEOUT_MS, abbandoniamo il tentativo
         qrTimer = setTimeout(() => {
           fail(`QR non scansionato entro il timeout (tentativo ${attempt}/${MAX_RETRIES})`);
         }, QR_TIMEOUT_MS);
@@ -166,25 +166,60 @@ async function createAndWaitReady(attempt) {
         );
         fail(`Auth failure: ${msg}`);
       });
+
+      // FIX TargetCloseError: intercetta la disconnessione inaspettata di Chromium
+      // che avviene durante l'injection di whatsapp-web.js.
+      // Senza questo listener la Promise resterebbe appesa per tutti i 3 minuti
+      // del browserTimer invece di ritentare immediatamente.
+      client.on('disconnected', (reason) => {
+        console.error(`💥 Chromium disconnesso durante l'avvio: ${reason}`);
+        fail(`Chromium disconnesso inaspettatamente: ${reason}`);
+      });
     });
 
-    await cleanSessionCache();   // pulizia cache prima di ogni tentativo
-    await client.initialize();   // avvia Chromium (non-blocking: i listener gestiscono il resto)
-    return await readyPromise;   // attende 'ready' o il primo errore
+    await cleanSessionCache();
+    await client.initialize();
+
+    // Aggancia i listener Puppeteer sulla pagina interna DOPO initialize(),
+    // unico momento in cui client.pupPage esiste già.
+    // 'error'     = crash del processo renderer (es. OOM, segfault)
+    // 'pageerror' = eccezione JS non catturata dentro WhatsApp Web (raramente
+    //               fatale, ma la logghiamo per diagnostica)
+    const page = client.pupPage;
+    if (page) {
+      page.on('error', (err) => {
+        console.error(`💥 Crash renderer Puppeteer: ${err.message}`);
+        // Nota: a questo punto 'disconnected' è già stato emesso dal client,
+        // quindi hasFailed è già true e fail() uscirà silenziosamente.
+        // Il listener serve come safety net per i casi in cui 'disconnected'
+        // non venisse emesso (es. kill -9 sul processo Chromium).
+        if (!hasFailed) {
+          hasFailed = true;
+          cleanup().then(() => {});
+        }
+      });
+
+      page.on('pageerror', (err) => {
+        // Errore JS interno a WhatsApp Web — non sempre fatale, logghiamo
+        // solo per avere visibilità in caso di debug futuro.
+        console.warn(`⚠️ Errore JS in pagina WhatsApp Web: ${err.message}`);
+      });
+    }
+
+    return await readyPromise;
 
   } catch (err) {
-    // initialize() stesso può lanciare (es. Chromium non trovato sul PATH)
     await cleanup();
-    throw err; // rilancia per il loop di retry in run()
+    throw err;
   }
 }
 
 // ── Loop principale con retry e backoff esponenziale ──────────────────────────
 async function run() {
-  validateEnv(); // FIX 3: validazione anticipata delle env var
+  validateEnv();
 
   let lastError;
-  let eventsError = false; // FIX 4: traccia se l'errore è avvenuto in checkeEvents
+  let eventsError = false;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     console.log(`\n⏳ Tentativo ${attempt}/${MAX_RETRIES}…`);
@@ -205,12 +240,11 @@ async function run() {
           'warning',
         );
       } finally {
-        // await esplicito: Chromium chiude i file descriptor prima di exit
         try { await client.destroy(); } catch (_) {}
       }
 
-      // FIX 4: Se checkeEvents ha lanciato, usciamo con codice 1 (errore),
-      // non con 0 (successo) come faceva prima.
+      // Se checkeEvents ha lanciato, usciamo con codice 1 (errore) e non 0
+      // (successo) — il cron/systemd lo vede come fallimento e può reagire.
       process.exit(eventsError ? 1 : 0);
 
     } catch (err) {
@@ -225,7 +259,6 @@ async function run() {
     }
   }
 
-  // Tutti i tentativi esauriti
   console.error(`💀 Bot arrestato dopo ${MAX_RETRIES} tentativi falliti.`);
   await sendNtfySummary(
     `💀 Bot WhatsApp non riuscito dopo ${MAX_RETRIES} tentativi.\n\nUltimo errore: ${lastError?.message}\n\nIntervento manuale necessario.`,
@@ -309,11 +342,9 @@ async function checkeEvents(client) {
       await sendReminder(client, chatId, generateReminder(appdate, apptime));
       successCount++;
 
-      // FIX 5: Il patch viene tentato subito dopo l'invio. Se fallisce,
-      // logghiamo il problema nel report ma non perdiamo il conteggio del
-      // messaggio inviato — l'operatore vedrà l'avviso nel riepilogo ntfy
-      // e potrà verificare manualmente. Un reminder inviato senza tag è
-      // preferibile a non registrare l'invio e lasciare il campo ambiguo.
+      // Il patch viene tentato in un try separato: se fallisce (es. timeout
+      // Google API) il messaggio WhatsApp è già stato inviato e lo segnaliamo
+      // nel report con ✅⚠️ invece di perdere traccia dell'invio.
       try {
         await calendar.events.patch({
           calendarId: process.env.CALENDAR_ID,
@@ -323,7 +354,7 @@ async function checkeEvents(client) {
         reportDetails.push(`✅ ${apptime} — ${clientName}`);
       } catch (patchErr) {
         console.warn(`⚠️ Messaggio inviato ma tag non scritto per ${clientName}: ${patchErr.message}`);
-        reportDetails.push(`✅⚠️ ${apptime} — ${clientName} (inviato, tag fallito: verificare manualmente)`);
+        reportDetails.push(`✅⚠️ ${apptime} — ${clientName} (inviato, tag Calendar fallito: verificare manualmente)`);
       }
 
       // Delay casuale tra messaggi (2–5s) per comportamento più naturale
@@ -363,8 +394,6 @@ function generateReminder(date, time) {
   );
 }
 
-// FIX 6: Lanciare una vera Error con stack trace invece di un oggetto literal
-// { name, message } che non viene catturato correttamente da tutti gli handler.
 async function sendReminder(client, chatId, text) {
   const numberDetails = await client.getNumberId(chatId);
   if (!numberDetails?._serialized) {
