@@ -217,44 +217,46 @@ async function run() {
   validateEnv();
 
   let lastError;
-  let eventsError = false;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     console.log(`\n⏳ Tentativo ${attempt}/${MAX_RETRIES}…`);
 
+    // Definiamo il client qui fuori per poterlo chiudere nel finally principale
+    let client = null; 
+
     try {
-      const client = await createAndWaitReady(attempt);
+      // 1. Avvia e attendi WhatsApp
+      client = await createAndWaitReady(attempt);
 
+      // 2. Esegui il controllo degli eventi (Google Calendar)
+      // Se questo fallisce, lancia un errore che viene catturato dal catch esterno,
+      // permettendo al ciclo FOR di passare al tentativo successivo.
+      await checkeEvents(client);
+
+      // 3. Se tutto è andato a buon fine (WhatsApp + Google), chiudiamo in modo pulito ed usciamo con 0
       try {
-        await checkeEvents(client);
-      } catch (err) {
-        eventsError = true;
-        console.error('❌ Errore in checkeEvents:', err);
-        await sendNtfySummary(
-          `❌ Errore critico durante il check degli eventi!\n\n${err.message}`,
-          'Softique Admin',
-          process.env.NTFY_TOPIC_ADMIN,
-          'high',
-          'warning',
-        );
-      } finally {
-        try {
-           console.log('⏳ Chiusura del client WhatsApp in corso...');
-            // Aspetta 5 secondi per evitare di interrompere injection o chiamate RPC pendenti
-            await new Promise((r) => setTimeout(r, 5000)); 
-            await client.destroy(); 
-            console.log('👋 Client disconnesso pulitamente.'); 
-          } catch (_) {}
-      }
+        console.log('⏳ Chiusura del client WhatsApp in corso...');
+        await new Promise((r) => setTimeout(r, 5000)); 
+        await client.destroy(); 
+        console.log('👋 Client disconnesso pulitamente.'); 
+      } catch (_) {}
 
-      // Se checkeEvents ha lanciato, usciamo con codice 1 (errore) e non 0
-      // (successo) — il cron/systemd lo vede come fallimento e può reagire.
-      process.exit(eventsError ? 1 : 0);
+      process.exit(0);
 
     } catch (err) {
       lastError = err;
       console.error(`❌ Tentativo ${attempt} fallito: ${err.message}`);
 
+      // Garantiamo la chiusura del client WhatsApp ad ogni tentativo fallito,
+      // altrimenti i processi Chromium rimangono appesi in background ad ogni retry!
+      if (client) {
+        try {
+          console.log('⏳ Pulizia client WhatsApp dopo il fallimento...');
+          await client.destroy();
+        } catch (_) {}
+      }
+
+      // Se non abbiamo esaurito i tentativi, aspettiamo il backoff ed eseguiamo il prossimo loop
       if (attempt < MAX_RETRIES) {
         const delay = BACKOFF_BASE_MS * Math.pow(2, attempt - 1); // 30s, 60s, 120s
         console.log(`🔄 Prossimo tentativo tra ${delay / 1000}s…`);
@@ -263,9 +265,10 @@ async function run() {
     }
   }
 
+  // Se arriviamo qui, significa che TUTTI i tentativi (1, 2 e 3) sono falliti
   console.error(`💀 Bot arrestato dopo ${MAX_RETRIES} tentativi falliti.`);
   await sendNtfySummary(
-    `💀 Bot WhatsApp non riuscito dopo ${MAX_RETRIES} tentativi.\n\nUltimo errore: ${lastError?.message}\n\nIntervento manuale necessario.`,
+    `💀 Bot WhatsApp/Calendar non riuscito dopo ${MAX_RETRIES} tentativi.\n\nUltimo errore: ${lastError?.message}\n\nIntervento manuale necessario.`,
     'Softique Admin',
     process.env.NTFY_TOPIC_ADMIN,
     'high',
