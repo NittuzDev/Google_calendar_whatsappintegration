@@ -417,44 +417,42 @@ function generateReminder(date, time) {
 }
 
 async function sendReminder(client, chatId, text) {
-  // 1. Pulisci il chatId mantenendo solo i numeri
+  // 1. Pulizia stringa: tiene solo i numeri
   const cleanNumber = chatId.replace(/[^0-9]/g, '');
   const formattedId = `${cleanNumber}@c.us`;
 
   try {
-    // 2. Forza WhatsApp a cercare l'ID reale (o LID) sui server,
-    // bypassando i bug di isRegisteredUser
-    const chatWid = await client.pupPage.evaluate(async (num) => {
-      try {
-        const windowWid = window.Store.WidFactory.createWid(num);
-        // Questo forza il recupero del contatto corretto dai server di WhatsApp
-        const exist = await window.Store.QueryExist(windowWid);
-        if (exist && exist.wid) {
-          return exist.wid._serialized;
-        }
-        return null;
-      } catch (e) {
-        return null;
-      }
-    }, formattedId);
+    // 2. Recupera il contatto direttamente da WhatsApp.
+    // Questo metodo è potentissimo: se il numero è nuovo, forza il fetch dai server di WA
+    // e risolve automaticamente i problemi di LID o ID mancanti.
+    const contact = await client.getContactById(formattedId);
 
-    // Se la ricerca sui server fallisce, il numero non esiste su WhatsApp
-    if (!chatWid) {
+    // Sicurezza: controlliamo se WhatsApp ha riconosciuto il contatto come valido
+    if (!contact || !contact.id || !contact.id._serialized) {
       throw Object.assign(new Error('Numero non registrato su WhatsApp'), {
         name: 'NotPresentError',
       });
     }
 
-    // 3. Invia il messaggio usando l'ID validato (che ora conterrà il LID corretto se necessario)
-    const result = await client.sendMessage(chatWid, text);
-    console.log(`✅ Messaggio inviato a ${chatWid}`);
+    // 3. Invia il messaggio usando l'ID preciso restituito da WhatsApp
+    const result = await client.sendMessage(contact.id._serialized, text);
+    console.log(`✅ Messaggio inviato a ${contact.id._serialized}`);
     return result;
 
   } catch (err) {
-    // Mantieni intatto il tuo sistema di gestione errori per il report
+    // Se l'errore è generato da noi (numero inesistente), rilancialo per il report di Calendar
     if (err.name === 'NotPresentError') throw err;
+
+    // Se l'errore arriva da getContactById perché il numero non esiste,
+    // intercettiamo il messaggio standard di WWebJS e lo formattiamo correttamente per il tuo report
+    if (err.message.includes('Contact missing') || err.message.includes('not found')) {
+      throw Object.assign(new Error('Numero non registrato su WhatsApp'), {
+        name: 'NotPresentError',
+      });
+    }
    
-    throw new Error(`Errore interno WhatsApp (LID/Connection): ${err.message}`);
+    // Qualsiasi altro errore generico (es. rete, timeout)
+    throw new Error(`Errore durante l'invio: ${err.message}`);
   }
 }
 
