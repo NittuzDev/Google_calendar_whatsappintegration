@@ -338,7 +338,7 @@ async function checkeEvents(client) {
     const startdate = new Date(event.start.dateTime);
     const apptime   = startdate.toLocaleTimeString('it-IT', { timeStyle: 'short', timeZone: 'Europe/Rome' });
     const appdate   = startdate.toLocaleDateString('it-IT', { timeZone: 'Europe/Rome' });
-    const chatId    = number_tel.replace('+', '').trim() + '@c.us';
+    const chatId    = number_tel;
 
     let eventDescription = event.description || '';
    
@@ -417,14 +417,23 @@ function generateReminder(date, time) {
 }
 
 async function sendReminder(client, chatId, text) {
-  const numberDetails = await client.getNumberId(chatId);
-  if (!numberDetails?._serialized) {
+  // 1. Clean the chatId to ensure it's just numbers + @c.us suffix
+  // (In case number_tel contains spaces or dashes)
+  const cleanId = chatId.replace(/[^0-9]/g, '') + '@c.us';
+
+  // 2. Explicitly check if the number is registered on WhatsApp
+  const isRegistered = await client.isRegisteredUser(cleanId);
+ 
+  if (!isRegistered) {
     throw Object.assign(new Error('Numero non registrato su WhatsApp'), {
       name: 'NotPresentError',
     });
   }
-  const result = await client.sendMessage(numberDetails._serialized, text);
-  console.log(`✅ Messaggio inviato a ${chatId}`);
+
+  // 3. Send the message directly using the formatted cleanId
+  // No need to look up contacts or open a chat manually!
+  const result = await client.sendMessage(cleanId, text);
+  console.log(`✅ Messaggio inviato a ${cleanId}`);
   return result;
 }
 
