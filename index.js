@@ -417,24 +417,45 @@ function generateReminder(date, time) {
 }
 
 async function sendReminder(client, chatId, text) {
-  // 1. Clean the chatId to ensure it's just numbers + @c.us suffix
-  // (In case number_tel contains spaces or dashes)
-  const cleanId = chatId.replace(/[^0-9]/g, '') + '@c.us';
+  // 1. Pulisci il chatId mantenendo solo i numeri
+  const cleanNumber = chatId.replace(/[^0-9]/g, '');
+  const formattedId = `${cleanNumber}@c.us`;
 
-  // 2. Explicitly check if the number is registered on WhatsApp
-  const isRegistered = await client.isRegisteredUser(cleanId);
- 
-  if (!isRegistered) {
-    throw Object.assign(new Error('Numero non registrato su WhatsApp'), {
-      name: 'NotPresentError',
-    });
+  try {
+    // 2. Forza WhatsApp a cercare l'ID reale (o LID) sui server,
+    // bypassando i bug di isRegisteredUser
+    const chatWid = await client.pupPage.evaluate(async (num) => {
+      try {
+        const windowWid = window.Store.WidFactory.createWid(num);
+        // Questo forza il recupero del contatto corretto dai server di WhatsApp
+        const exist = await window.Store.QueryExist(windowWid);
+        if (exist && exist.wid) {
+          return exist.wid._serialized;
+        }
+        return null;
+      } catch (e) {
+        return null;
+      }
+    }, formattedId);
+
+    // Se la ricerca sui server fallisce, il numero non esiste su WhatsApp
+    if (!chatWid) {
+      throw Object.assign(new Error('Numero non registrato su WhatsApp'), {
+        name: 'NotPresentError',
+      });
+    }
+
+    // 3. Invia il messaggio usando l'ID validato (che ora conterrà il LID corretto se necessario)
+    const result = await client.sendMessage(chatWid, text);
+    console.log(`✅ Messaggio inviato a ${chatWid}`);
+    return result;
+
+  } catch (err) {
+    // Mantieni intatto il tuo sistema di gestione errori per il report
+    if (err.name === 'NotPresentError') throw err;
+   
+    throw new Error(`Errore interno WhatsApp (LID/Connection): ${err.message}`);
   }
-
-  // 3. Send the message directly using the formatted cleanId
-  // No need to look up contacts or open a chat manually!
-  const result = await client.sendMessage(cleanId, text);
-  console.log(`✅ Messaggio inviato a ${cleanId}`);
-  return result;
 }
 
 async function sendNtfySummary(message, title, topic, priority, tags) {
