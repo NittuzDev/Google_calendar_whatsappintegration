@@ -328,35 +328,50 @@ async function checkeEvents(client) {
       continue;
     }
 
-    const eventDescription = event.description || '';
-
-    if (eventDescription.includes('[REMINDER_SENT]')) {
-      reportDetails.push(`⏭️ ${clientName}: reminder già inviato`);
-      continue;
-    }
-
+    // 1. Controlliamo SUBITO se è un evento di tutto il giorno
     if (!event.start.dateTime) {
       reportDetails.push(`⏭️ ${clientName}: evento tutto il giorno, reminder non inviato`);
       continue;
     }
 
+    // 2. Estraiamo date e orari
     const startdate = new Date(event.start.dateTime);
     const apptime   = startdate.toLocaleTimeString('it-IT', { timeStyle: 'short', timeZone: 'Europe/Rome' });
     const appdate   = startdate.toLocaleDateString('it-IT', { timeZone: 'Europe/Rome' });
     const chatId    = number_tel.replace('+', '').trim() + '@c.us';
 
+    let eventDescription = event.description || '';
+   
+    // 3. Creiamo il tag dinamico per la data corrente (es: [REMINDER_SENT_12/06/2026])
+    const reminderTag = `[REMINDER_SENT_${appdate}]`;
+
+    // 4. Verifichiamo se il tag SPECIFICO di oggi esiste già
+    if (eventDescription.includes(reminderTag)) {
+      reportDetails.push(`⏭️ ${clientName}: reminder già inviato per questa data`);
+      continue;
+    }
+
+    // 5. PULIZIA DEI VECCHI TAG COPIATI
+    // Questa regex cerca la scritta "[REMINDER_SENT_..." seguita da qualsiasi data e chiusa da "]"
+    // Il flag 'g' rimuove TUTTI i vecchi tag se ce n'è più di uno, e .trim() pulisce gli spazi vuoti.
+    const oldTagsRegex = /\[REMINDER_SENT_\d{2}\/\d{2}\/\d{4}\]/g;
+    eventDescription = eventDescription.replace(oldTagsRegex, '').trim();
+
     try {
       await sendReminder(client, chatId, generateReminder(appdate, apptime));
       successCount++;
 
-      // Il patch viene tentato in un try separato: se fallisce (es. timeout
-      // Google API) il messaggio WhatsApp è già stato inviato e lo segnaliamo
-      // nel report con ✅⚠️ invece di perdere traccia dell'invio.
       try {
+        // 6. Costruiamo la nuova descrizione: se è rimasto del testo (le note reali dell'appuntamento),
+        // andiamo a capo e mettiamo il nuovo tag, altrimenti mettiamo solo il tag.
+        const updatedDescription = eventDescription
+          ? `${eventDescription}\n${reminderTag}`
+          : reminderTag;
+
         await calendar.events.patch({
           calendarId: process.env.CALENDAR_ID,
           eventId: event.id,
-          requestBody: { description: eventDescription + '\n[REMINDER_SENT]' },
+          requestBody: { description: updatedDescription },
         });
         reportDetails.push(`✅ ${apptime} — ${clientName}`);
       } catch (patchErr) {
