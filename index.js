@@ -338,7 +338,7 @@ async function checkeEvents(client) {
     const startdate = new Date(event.start.dateTime);
     const apptime   = startdate.toLocaleTimeString('it-IT', { timeStyle: 'short', timeZone: 'Europe/Rome' });
     const appdate   = startdate.toLocaleDateString('it-IT', { timeZone: 'Europe/Rome' });
-    const chatId    = number_tel.replace('+', '').trim() + '@c.us';
+    const chatId    = number_tel;
 
     let eventDescription = event.description || '';
    
@@ -417,15 +417,41 @@ function generateReminder(date, time) {
 }
 
 async function sendReminder(client, chatId, text) {
-  const numberDetails = await client.getNumberId(chatId);
-  if (!numberDetails?._serialized) {
-    throw Object.assign(new Error('Numero non registrato su WhatsApp'), {
+  let cleanNumber = chatId.replace(/[^0-9]/g, '');
+
+  // Rimuove il doppio zero iniziale (es. 0039 → 39)
+  if (cleanNumber.startsWith('00')) {
+    cleanNumber = cleanNumber.slice(2);
+  }
+
+  // Aggiunge il prefisso italiano se mancante
+  if (cleanNumber.length === 10 && cleanNumber.startsWith('3')) {
+    cleanNumber = '39' + cleanNumber;
+  }
+
+  if (!cleanNumber || cleanNumber.length < 11) {
+    throw Object.assign(new Error(`Numero non valido: "${chatId}"`), {
       name: 'NotPresentError',
     });
   }
-  const result = await client.sendMessage(numberDetails._serialized, text);
-  console.log(`✅ Messaggio inviato a ${chatId}`);
-  return result;
+
+  try {
+    const numberDetails = await client.getNumberId(cleanNumber);
+
+    if (!numberDetails || !numberDetails._serialized) {
+      throw Object.assign(new Error('Numero non registrato su WhatsApp'), {
+        name: 'NotPresentError',
+      });
+    }
+
+    const result = await client.sendMessage(numberDetails._serialized, text);
+    console.log(`✅ Messaggio inviato a ${cleanNumber}`);
+    return result;
+
+  } catch (err) {
+    if (err.name === 'NotPresentError') throw err;
+    throw new Error(`Errore durante l'invio a ${cleanNumber}: ${err.message}`);
+  }
 }
 
 async function sendNtfySummary(message, title, topic, priority, tags) {
