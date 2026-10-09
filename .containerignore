@@ -1,0 +1,7 @@
+.git
+node_modules
+sessions
+.wwebjs_cache
+.env
+credentials.json
+deploy
