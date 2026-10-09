@@ -1,0 +1,12 @@
+[Unit]
+Description=Promemoria WhatsApp ogni giorno alle 19:00 (Europe/Rome)
+
+[Timer]
+# Il CT deve avere timezone Europe/Rome, così "domani" nel codice coincide
+# con il giorno civile italiano.
+OnCalendar=*-*-* 19:00:00
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

@@ -83,15 +83,22 @@ async function createAndWaitReady(attempt) {
       webVersionCache: {
         type: 'local'
       },
+      // Puppeteer 24 (trascinato da whatsapp-web.js 1.34) è testato su Chrome for
+      // Testing 146, non sul Chromium Debian (~150 su Trixie). Senza CHROME_PATH
+      // viene usato il browser scaricato con `npx puppeteer browsers install chrome`.
       puppeteer: {
         headless: true,
-        executablePath: '/usr/bin/chromium',
+        ...(process.env.CHROME_PATH
+          ? { executablePath: process.env.CHROME_PATH }
+          : {}),
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
           '--disable-gpu',
           '--disable-software-rasterizer',
           '--disable-extensions',
+          '--no-zygote',
           '--js-flags=--max-old-space-size=1024',
         ],
         timeout: 60_000,
