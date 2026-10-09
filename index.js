@@ -353,8 +353,10 @@ async function checkeEvents(client) {
     const reminderTag = `[REMINDER_SENT_${appdate}]`;
 
     // 4. Verifichiamo se il tag SPECIFICO di oggi esiste già
+    console.log(eventDescription+"-"+reminderTag);
     if (eventDescription.includes(reminderTag)) {
       reportDetails.push(`⏭️ ${clientName}: reminder già inviato per questa data`);
+      console.log("gia inviato");
       continue;
     }
 
