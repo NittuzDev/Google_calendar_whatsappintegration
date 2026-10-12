@@ -66,11 +66,14 @@ async function createAndWaitReady(attempt) {
   let failFn       = null; // riferimento a fail(), usabile fuori dall'executor della Promise
   let browserTimer = null;
   let qrTimer      = null;
+  let syncWatcher  = null;
+  let isReady      = false;
   let client       = null;
 
   const cleanup = async () => {
     clearTimeout(browserTimer);
     clearTimeout(qrTimer);
+    clearInterval(syncWatcher);
     if (client) {
       try { await client.destroy(); } catch (_) {}
     }
@@ -152,8 +155,10 @@ async function createAndWaitReady(attempt) {
       });
 
       client.on('ready', () => {
+        isReady = true;
         clearTimeout(browserTimer);
         clearTimeout(qrTimer);
+        clearInterval(syncWatcher);
         console.log(`✅ Client WhatsApp pronto (tentativo ${attempt}/${MAX_RETRIES})`);
         resolve(client);
       });
@@ -195,6 +200,31 @@ async function createAndWaitReady(attempt) {
 
     await cleanSessionCache();
     await client.initialize();
+
+    // WORKAROUND 'ready' mai emesso (whatsapp-web.js 1.34.7, issue wwebjs #5758):
+    // la libreria emette 'authenticated' e 'ready' solo sull'evento
+    // Socket 'change:hasSynced'. Se WhatsApp Web ha già sincronizzato PRIMA che
+    // la libreria si registri, l'evento non scatta mai e lo script resta fermo
+    // fino a "Timeout avvio browser". Qui controlliamo lo stato direttamente e,
+    // se risulta già sincronizzato, invochiamo a mano lo stesso handler che la
+    // libreria avrebbe chiamato. Non fa nulla se 'ready' arriva normalmente
+    // o se è in corso la scansione del QR (hasSynced è false).
+    let kicked = false;
+    syncWatcher = setInterval(async () => {
+      if (isReady || hasFailed || kicked || !client?.pupPage) return;
+      try {
+        const synced = await client.pupPage.evaluate(
+          () => window.require('WAWebSocketModel').Socket.hasSynced,
+        );
+        if (synced) {
+          kicked = true;
+          console.log('🛠️ WhatsApp Web già sincronizzato ma "ready" non emesso: forzo la procedura di avvio.');
+          await client.pupPage.evaluate(() => window.onAppStateHasSyncedEvent());
+        }
+      } catch (err) {
+        console.warn(`⚠️ Controllo hasSynced fallito: ${err.message}`);
+      }
+    }, 10_000);
 
     // Aggancia i listener Puppeteer sulla pagina interna DOPO initialize(),
     // unico momento in cui client.pupPage esiste già.
