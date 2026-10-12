@@ -62,6 +62,8 @@ async function cleanSessionCache() {
 async function createAndWaitReady(attempt) {
   let hasNotified  = false;
   let hasFailed    = false;
+  let failError    = null; // causa "vera" del fallimento (timeout, disconnessione, ecc.)
+  let failFn       = null; // riferimento a fail(), usabile fuori dall'executor della Promise
   let browserTimer = null;
   let qrTimer      = null;
   let client       = null;
@@ -113,9 +115,11 @@ async function createAndWaitReady(attempt) {
       const fail = async (reason) => {
         if (hasFailed) return;
         hasFailed = true;
+        failError = new Error(reason);
         await cleanup();
-        reject(new Error(reason));
+        reject(failError);
       };
+      failFn = fail;
 
       // Timer principale: scatta se Chromium non si avvia entro BROWSER_TIMEOUT_MS
       browserTimer = setTimeout(() => {
@@ -173,7 +177,21 @@ async function createAndWaitReady(attempt) {
         console.error(`💥 Chromium disconnesso durante l'avvio: ${reason}`);
         fail(`Chromium disconnesso inaspettatamente: ${reason}`);
       });
+
+      // Diagnostica: mostra fino a che punto arriva il caricamento di WhatsApp Web
+      // prima di bloccarsi (utile per capire dove si pianta initialize()).
+      client.on('loading_screen', (percent, message) => {
+        console.log(`⏳ Caricamento WhatsApp Web: ${percent}% — ${message}`);
+      });
+      client.on('authenticated', () => console.log('🔐 Autenticato'));
     });
+
+    // FIX crash "Unhandled promise rejection": se initialize() fallisce per primo
+    // (es. TargetCloseError), nessuno sta più aspettando readyPromise. Quando poi
+    // il browserTimer scatta e la rifiuta, Node termina il processo con exit 1,
+    // saltando i retry. Con questo catch vuoto la rejection è "gestita"; l'errore
+    // vero viene comunque rilanciato dal blocco catch qui sotto.
+    readyPromise.catch(() => {});
 
     await cleanSessionCache();
     await client.initialize();
@@ -187,14 +205,11 @@ async function createAndWaitReady(attempt) {
     if (page) {
       page.on('error', (err) => {
         console.error(`💥 Crash renderer Puppeteer: ${err.message}`);
-        // Nota: a questo punto 'disconnected' è già stato emesso dal client,
-        // quindi hasFailed è già true e fail() uscirà silenziosamente.
-        // Il listener serve come safety net per i casi in cui 'disconnected'
-        // non venisse emesso (es. kill -9 sul processo Chromium).
-        if (!hasFailed) {
-          hasFailed = true;
-          cleanup().then(() => {});
-        }
+        // Se 'disconnected' è già stato emesso, hasFailed è true e fail() esce
+        // subito. Altrimenti (es. kill -9 su Chromium) fail() rifiuta la
+        // readyPromise: prima qui si faceva solo cleanup() e la Promise restava
+        // appesa per sempre (i timer venivano cancellati, nessun retry).
+        failFn?.(`Crash renderer Puppeteer: ${err.message}`);
       });
 
       page.on('pageerror', (err) => {
@@ -208,7 +223,10 @@ async function createAndWaitReady(attempt) {
 
   } catch (err) {
     await cleanup();
-    throw err;
+    // Se il fallimento è partito da fail() (timeout, disconnessione...), il
+    // "Target closed" di initialize() è solo la conseguenza della chiusura del
+    // browser: riportiamo la causa originale, che è quella utile da leggere.
+    throw failError ?? err;
   }
 }
 
